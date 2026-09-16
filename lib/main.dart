@@ -3,8 +3,14 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'data/database/local_db.dart';
 import 'providers/expense_provider.dart';
+import 'providers/sms_queue_provider.dart';
 import 'providers/theme_provider.dart';
+import 'services/notification_service.dart';
+import 'services/sms_parser.dart';
+import 'ui/dashboard/components/sms_approval_queue_screen.dart';
 import 'ui/main_navigation.dart';
+
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -19,6 +25,17 @@ void main() async {
 
   final hiveService = HiveService();
   await hiveService.init();
+
+  // Initialize offline Notification Service with tap routing
+  await NotificationService.initNotifications(
+    onNotificationTap: (response) {
+      navigatorKey.currentState?.push(
+        MaterialPageRoute(
+          builder: (context) => const SmsApprovalQueueScreen(),
+        ),
+      );
+    },
+  );
 
   runApp(
     ProviderScope(
@@ -37,17 +54,43 @@ class ExpenseApp extends ConsumerStatefulWidget {
   ConsumerState<ExpenseApp> createState() => _ExpenseAppState();
 }
 
-class _ExpenseAppState extends ConsumerState<ExpenseApp> {
+class _ExpenseAppState extends ConsumerState<ExpenseApp>
+    with WidgetsBindingObserver {
+  static const MethodChannel _smsChannel =
+      MethodChannel('com.vault.cashflow/sms');
+
   @override
   void initState() {
     super.initState();
-    // Hydrate state from Hive database on startup
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addObserver(this);
+
+    // Hydrate state from Hive database on startup and configure native SMS bridge
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
       final db = ref.read(hiveServiceProvider);
       ref.read(themeProvider.notifier).initTheme(db);
       ref.read(expenseProvider.notifier).loadInitialData(db);
       ref.read(targetBudgetProvider.notifier).initTarget(db);
+      await ref.read(smsQueueProvider.notifier).initQueue(db);
+      await ref.read(smsPermissionProvider.notifier).checkPermission();
+      await ref.read(batteryOptimizationProvider.notifier).checkStatus();
+      await ref.read(smsQueueProvider.notifier).syncFromNativeStorage(db);
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      final db = ref.read(hiveServiceProvider);
+      ref.read(smsPermissionProvider.notifier).checkPermission();
+      ref.read(batteryOptimizationProvider.notifier).checkStatus();
+      ref.read(smsQueueProvider.notifier).syncFromNativeStorage(db);
+    }
   }
 
   @override
@@ -55,6 +98,7 @@ class _ExpenseAppState extends ConsumerState<ExpenseApp> {
     final themeMode = ref.watch(themeProvider);
 
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'Expense Tracker',
       debugShowCheckedModeBanner: false,
       themeMode: themeMode,

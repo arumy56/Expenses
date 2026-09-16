@@ -2,8 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/expense.dart';
 import '../../providers/expense_provider.dart';
+import '../../providers/sms_queue_provider.dart';
 import '../../providers/theme_provider.dart';
 import '../../services/analytics.dart';
+import 'components/sms_approval_queue_screen.dart';
 
 class DashboardView extends ConsumerWidget {
   const DashboardView({super.key});
@@ -110,6 +112,9 @@ class DashboardView extends ConsumerWidget {
     final expenses = ref.watch(expenseProvider);
     final themeMode = ref.watch(themeProvider);
     final targetBudget = ref.watch(targetBudgetProvider);
+    final smsQueue = ref.watch(smsQueueProvider);
+    final hasSmsPermission = ref.watch(smsPermissionProvider);
+    final isBatteryExempt = ref.watch(batteryOptimizationProvider);
     final db = ref.read(hiveServiceProvider);
     final isDark = themeMode == ThemeMode.dark;
 
@@ -202,6 +207,39 @@ class DashboardView extends ConsumerWidget {
         child: ListView(
           padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
           children: [
+            // Information Strip: Pending M-Pesa SMS Assistant Queue
+            if (smsQueue.isNotEmpty) ...[
+              _buildSmsQueueBanner(
+                context: context,
+                isDark: isDark,
+                pendingCount: smsQueue.length,
+                primaryAccent: primaryAccent,
+              ),
+              const SizedBox(height: 16),
+            ] else if (!hasSmsPermission) ...[
+              _buildPermissionBanner(
+                context: context,
+                ref: ref,
+                isDark: isDark,
+                cardBg: cardBg,
+                borderColor: borderColor,
+                textPrimary: textPrimary,
+                textSecondary: textSecondary,
+              ),
+              const SizedBox(height: 16),
+            ] else if (!isBatteryExempt) ...[
+              _buildBatteryOptimizationBanner(
+                context: context,
+                ref: ref,
+                isDark: isDark,
+                cardBg: cardBg,
+                borderColor: borderColor,
+                textPrimary: textPrimary,
+                textSecondary: textSecondary,
+              ),
+              const SizedBox(height: 16),
+            ],
+
             // Component 1: Net Cashflow Balance Card (Strictly displays formatted KSh numeric value)
             _buildNetCashflowCard(
               isDark: isDark,
@@ -1003,6 +1041,336 @@ class DashboardView extends ConsumerWidget {
       default:
         return Icons.category_rounded;
     }
+  }
+
+  Widget _buildSmsQueueBanner({
+    required BuildContext context,
+    required bool isDark,
+    required int pendingCount,
+    required Color primaryAccent,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const SmsApprovalQueueScreen(),
+            ),
+          );
+        },
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: isDark
+                  ? [
+                      const Color(0xFF2A1B4D),
+                      const Color(0xFF1E222B),
+                    ]
+                  : [
+                      const Color(0xFFF3E8FF),
+                      const Color(0xFFFAF5FF),
+                    ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: isDark
+                  ? const Color(0xFF8B5CF6).withValues(alpha: 0.5)
+                  : const Color(0xFF7C3AED).withValues(alpha: 0.35),
+              width: 1.2,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: (isDark
+                        ? const Color(0xFF8B5CF6)
+                        : const Color(0xFF7C3AED))
+                    .withValues(alpha: 0.08),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(7),
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? const Color(0xFF3B1E78)
+                      : const Color(0xFFEDE9FE),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.sms_rounded,
+                  size: 18,
+                  color: isDark
+                      ? const Color(0xFFA78BFA)
+                      : const Color(0xFF7C3AED),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  '⚙️ Vault Assistant: You have $pendingCount unlogged M-Pesa transaction${pendingCount == 1 ? '' : 's'} waiting for review.',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    height: 1.3,
+                    color: isDark
+                        ? const Color(0xFFE9D5FF)
+                        : const Color(0xFF581C87),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Icon(
+                Icons.arrow_forward_ios_rounded,
+                size: 14,
+                color: isDark
+                    ? const Color(0xFFA78BFA)
+                    : const Color(0xFF7C3AED),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPermissionBanner({
+    required BuildContext context,
+    required WidgetRef ref,
+    required bool isDark,
+    required Color cardBg,
+    required Color borderColor,
+    required Color textPrimary,
+    required Color textSecondary,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: cardBg,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: borderColor, width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: (isDark ? Colors.black : const Color(0xFF0F172A))
+                .withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF003824) : const Color(0xFFECFDF5),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(
+              Icons.mark_email_read_rounded,
+              color: Color(0xFF059669),
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Auto-Log M-Pesa Transactions',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Enable SMS detection so incoming transactions are automatically staged for one-tap tracking.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.35,
+                    color: textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF059669),
+                    foregroundColor: Colors.white,
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    minimumSize: const Size(0, 32),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    elevation: 0,
+                  ),
+                  onPressed: () async {
+                    final db = ref.read(hiveServiceProvider);
+                    final granted = await ref
+                        .read(smsPermissionProvider.notifier)
+                        .requestPermission();
+                    if (granted) {
+                      final count = await ref
+                          .read(smsQueueProvider.notifier)
+                          .syncFromNativeStorage(db);
+                      if (context.mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'M-Pesa Assistant activated! $count pending items ready.',
+                            ),
+                            backgroundColor: const Color(0xFF059669),
+                            behavior: SnackBarBehavior.floating,
+                          ),
+                        );
+                      }
+                    }
+                  },
+                  child: const Text(
+                    'Enable Auto-Detect',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBatteryOptimizationBanner({
+    required BuildContext context,
+    required WidgetRef ref,
+    required bool isDark,
+    required Color cardBg,
+    required Color borderColor,
+    required Color textPrimary,
+    required Color textSecondary,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: cardBg,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFF59E0B).withValues(alpha: 0.4), width: 1.2),
+        boxShadow: [
+          BoxShadow(
+            color: (isDark ? Colors.black : const Color(0xFF0F172A))
+                .withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF332002) : const Color(0xFFFEF3C7),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(
+              Icons.bolt_rounded,
+              color: Color(0xFFD97706),
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Keep Assistant Active 24/7',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Allow unrestricted background activity so Android does not sleep or silence M-Pesa notifications after idle.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.35,
+                    color: textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFFD97706),
+                        foregroundColor: Colors.white,
+                        padding:
+                            const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                        minimumSize: const Size(0, 32),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        elevation: 0,
+                      ),
+                      onPressed: () async {
+                        await ref
+                            .read(batteryOptimizationProvider.notifier)
+                            .requestExemption();
+                      },
+                      child: const Text(
+                        'Disable Sleep Limits',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton(
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        minimumSize: const Size(0, 32),
+                      ),
+                      onPressed: () async {
+                        await ref
+                            .read(batteryOptimizationProvider.notifier)
+                            .openSettings();
+                      },
+                      child: Text(
+                        'App Info',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: textSecondary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   static Color _getCategoryColor(String category, bool isDark) {

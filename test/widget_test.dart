@@ -1,10 +1,13 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:expense_tracker/data/models/expense.dart';
 import 'package:expense_tracker/providers/expense_provider.dart';
+import 'package:expense_tracker/providers/sms_queue_provider.dart';
 import 'package:expense_tracker/providers/theme_provider.dart';
 import 'package:expense_tracker/services/advisor_engine.dart';
 import 'package:expense_tracker/services/analytics.dart';
 import 'package:expense_tracker/services/export_engine.dart';
+import 'package:expense_tracker/services/notification_service.dart';
+import 'package:expense_tracker/services/sms_parser.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -153,6 +156,167 @@ void main() {
       final insights = AdvisorEngine.generateInsights(sampleExpenses);
       expect(insights.any((i) => i['type'] == 'warning'), isTrue);
       expect(insights.any((i) => i['type'] == 'info'), isTrue);
+    });
+  });
+
+  group('SmsParser Regex & Extraction Tests', () {
+    test('parseMpesaSms extracts Inflow received funds properly', () {
+      const msg =
+          'QA45TY7890 Confirmed. You have received Ksh1,500.00 from JOHN DOE 0712345678 on 22/8/26 at 4:30 PM. New M-PESA balance is Ksh5,400.00.';
+      final parsed = SmsParser.parseMpesaSms(msg);
+
+      expect(parsed, isNotNull);
+      expect(parsed!['amount'], 1500.0);
+      expect(parsed['isIncome'], isTrue);
+      expect(parsed['description'], contains('JOHN DOE'));
+      expect(parsed['referenceCode'], 'QA45TY7890');
+      expect(parsed['date'], '2026-08-22');
+    });
+
+    test('parseMpesaSms extracts Outlay sent money properly', () {
+      const msg =
+          'QA45TY7891 Confirmed. Ksh1,200.00 sent to JANE DOE 0722334455 on 22/8/26 at 2:15 PM. New M-PESA balance is Ksh4,200.00.';
+      final parsed = SmsParser.parseMpesaSms(msg);
+
+      expect(parsed, isNotNull);
+      expect(parsed!['amount'], 1200.0);
+      expect(parsed['isIncome'], isFalse);
+      expect(parsed['description'], contains('JANE DOE'));
+      expect(parsed['referenceCode'], 'QA45TY7891');
+      expect(parsed['date'], '2026-08-22');
+    });
+
+    test('parseMpesaSms extracts Outlay paid to merchant / Buy Goods properly', () {
+      const msg =
+          'QA45TY7892 Confirmed. Ksh2,450.00 paid to QUICKMART SUPERMARKET. on 28/8/26 at 7:00 PM. New M-PESA balance is Ksh1,750.00.';
+      final parsed = SmsParser.parseMpesaSms(msg);
+
+      expect(parsed, isNotNull);
+      expect(parsed!['amount'], 2450.0);
+      expect(parsed['isIncome'], isFalse);
+      expect(parsed['description'], contains('QUICKMART SUPERMARKET'));
+      expect(parsed['referenceCode'], 'QA45TY7892');
+      expect(parsed['date'], '2026-08-28');
+    });
+
+    test('parseMpesaSms extracts Outlay withdrawn from Agent properly', () {
+      const msg =
+          'QA45TY7894 Confirmed. Ksh5,000.00 withdrawn from 123456 - AGENT NAME on 22/8/26 at 11:00 AM. New M-PESA balance is Ksh200.00.';
+      final parsed = SmsParser.parseMpesaSms(msg);
+
+      expect(parsed, isNotNull);
+      expect(parsed!['amount'], 5000.0);
+      expect(parsed['isIncome'], isFalse);
+      expect(parsed['description'], contains('AGENT NAME'));
+      expect(parsed['referenceCode'], 'QA45TY7894');
+    });
+
+    test('parseMpesaSms extracts Paybill with account number properly', () {
+      const msg =
+          'QA45TY7895 Confirmed. Ksh 3,000.00 paid to KPLC PREPAID for account 123456 on 29/8/26 at 8:00 AM. New M-PESA balance is Ksh500.00.';
+      final parsed = SmsParser.parseMpesaSms(msg);
+
+      expect(parsed, isNotNull);
+      expect(parsed!['amount'], 3000.0);
+      expect(parsed['isIncome'], isFalse);
+      expect(parsed['description'], contains('KPLC PREPAID'));
+    });
+
+    test('parseMpesaSms extracts Bank to M-Pesa transfer properly', () {
+      const msg =
+          'QA45TY7896 Confirmed. Ksh10,000.00 transferred from Equity Bank on 29/8/26 at 9:30 AM.';
+      final parsed = SmsParser.parseMpesaSms(msg);
+
+      expect(parsed, isNotNull);
+      expect(parsed!['amount'], 10000.0);
+      expect(parsed['isIncome'], isTrue);
+      expect(parsed['description'], contains('Equity Bank'));
+    });
+
+    test('parseMpesaSms extracts Outlay when format is You have sent Ksh... properly', () {
+      const msg =
+          'QA45TY7897 Confirmed. You have sent Ksh1,200.00 to JANE DOE 0722334455 on 22/8/26 at 2:15 PM. New M-PESA balance is Ksh4,200.00.';
+      final parsed = SmsParser.parseMpesaSms(msg);
+
+      expect(parsed, isNotNull);
+      expect(parsed!['amount'], 1200.0);
+      expect(parsed['isIncome'], isFalse);
+      expect(parsed['description'], contains('JANE DOE'));
+      expect(parsed['referenceCode'], 'QA45TY7897');
+    });
+
+    test('parseMpesaSms extracts Outlay with Ksh. period prefix properly', () {
+      const msg =
+          'QA45TY7898 Confirmed. Ksh. 500.00 sent to 0712345678 - JANE DOE on 22/8/26 at 3:00 PM.';
+      final parsed = SmsParser.parseMpesaSms(msg);
+
+      expect(parsed, isNotNull);
+      expect(parsed!['amount'], 500.0);
+      expect(parsed['isIncome'], isFalse);
+      expect(parsed['description'], contains('JANE DOE'));
+    });
+
+    test('parseMpesaSms extracts Outlay when format is You have paid Ksh... properly', () {
+      const msg =
+          'QA45TY7899 Confirmed. You have paid Ksh 2,450.00 to QUICKMART SUPERMARKET on 28/8/26 at 7:00 PM.';
+      final parsed = SmsParser.parseMpesaSms(msg);
+
+      expect(parsed, isNotNull);
+      expect(parsed!['amount'], 2450.0);
+      expect(parsed['isIncome'], isFalse);
+      expect(parsed['description'], contains('QUICKMART SUPERMARKET'));
+    });
+
+    test('parseMpesaSms returns null on non-M-Pesa or promotional messages', () {
+      expect(SmsParser.parseMpesaSms('Your OTP code is 481920. Do not share.'), isNull);
+      expect(SmsParser.parseMpesaSms(''), isNull);
+      expect(SmsParser.parseMpesaSms('Hey, are we still meeting for lunch today?'), isNull);
+      expect(SmsParser.parseMpesaSms('Special offer! Get 50% discount on data bundles today.'), isNull);
+    });
+  });
+
+  group('SmsQueueNotifier Tests', () {
+    test('SmsQueueNotifier initializes with empty state', () {
+      final notifier = SmsQueueNotifier();
+      expect(notifier.state, isEmpty);
+    });
+
+    test('SmsQueueNotifier accepts initial pending items', () {
+      final sampleTx = {
+        'id': 'mpesa_QA45TY7890',
+        'referenceCode': 'QA45TY7890',
+        'amount': 1500.0,
+        'isIncome': true,
+        'description': 'JOHN DOE 0712345678',
+        'date': '2026-08-22',
+        'timestamp': 1724300000000,
+      };
+      final notifier = SmsQueueNotifier([sampleTx]);
+      expect(notifier.state.length, 1);
+      expect(notifier.state.first['amount'], 1500.0);
+    });
+
+    test('smsQueueProvider is registered and readable via ProviderContainer', () {
+      final container = ProviderContainer();
+      expect(container.read(smsQueueProvider), isEmpty);
+    });
+
+    test('smsPermissionProvider initializes to false', () {
+      final container = ProviderContainer();
+      expect(container.read(smsPermissionProvider), isFalse);
+    });
+
+    test('batteryOptimizationProvider initializes to false', () {
+      final container = ProviderContainer();
+      expect(container.read(batteryOptimizationProvider), isFalse);
+    });
+  });
+
+  group('NotificationService Configuration Tests', () {
+    test('NotificationService channel parameters match privacy design tokens', () {
+      expect(NotificationService.channelId, 'vault_alerts');
+      expect(NotificationService.channelName, 'Vault Alerts');
+      expect(NotificationService.channelDescription, contains('Instant M-Pesa'));
     });
   });
 }
